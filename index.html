@@ -1,0 +1,240 @@
+<!--
+Counselling App - Web Starter (Single-file: index.html)
+Features:
+- Simple onboarding (exam select, rank, category)
+- Anonymous Firebase Auth (signInAnonymously)
+- Save profile to Firestore
+- Dashboard showing profile, sample deadlines, suggested colleges
+- Seat Predictor (simple rank-based heuristic)
+
+How to use:
+1. Replace FIREBASE_CONFIG placeholder with your Firebase project config.
+   You can get it from the Firebase Console -> Project settings -> SDK setup and configuration.
+2. Serve this file with a local server (e.g., using VS Code Live Server or: python -m http.server 3000)
+3. Make sure Firestore rules allow read/write for authenticated users (or set up proper rules).
+
+Note: This is a starter. Add Storage, Cloud Functions, security rules, and OpenAI integration later.
+-->
+
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Counselling App - Starter</title>
+  <style>
+    :root{font-family:system-ui,-apple-system,Segoe UI,Roboto,'Helvetica Neue',Arial;}
+    body{margin:0;padding:20px;background:#f6f8fb;color:#111}
+    .container{max-width:900px;margin:0 auto}
+    h1{font-size:22px}
+    .card{background:#fff;padding:14px;border-radius:10px;box-shadow:0 1px 4px rgba(16,24,40,.06);margin-bottom:12px}
+    .row{display:flex;gap:8px;flex-wrap:wrap}
+    .chip{padding:8px 12px;border-radius:20px;border:1px solid #dcdfe6;cursor:pointer}
+    .chip.active{background:#2563eb;color:#fff;border-color:#2563eb}
+    label{display:block;margin:8px 0 4px}
+    input,select{padding:10px;border-radius:8px;border:1px solid #e6e9ef;width:100%;box-sizing:border-box}
+    button{padding:10px 14px;border-radius:8px;border:0;background:#2563eb;color:#fff;cursor:pointer}
+    .muted{color:#666;font-size:13px}
+    ul{padding-left:16px}
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Counselling App - Web Starter</h1>
+
+    <div id="onboarding" class="card">
+      <h2>Onboarding</h2>
+      <div>
+        <label>Select Exam</label>
+        <div id="examChips" class="row">
+          <div class="chip active" data-exam="KCET">KCET</div>
+          <div class="chip" data-exam="NEET">NEET</div>
+          <div class="chip" data-exam="JEE">JEE</div>
+          <div class="chip" data-exam="CSAB">CSAB</div>
+        </div>
+      </div>
+
+      <div>
+        <label>Rank / Score</label>
+        <input id="rankInput" placeholder="e.g. 12000 or 85%" />
+      </div>
+
+      <div>
+        <label>Category</label>
+        <select id="categorySelect">
+          <option>General</option>
+          <option>OBC</option>
+          <option>SC</option>
+          <option>ST</option>
+        </select>
+      </div>
+
+      <div style="margin-top:10px">
+        <button id="saveProfileBtn">Save & Continue</button>
+        <span id="saveStatus" class="muted" style="margin-left:8px"></span>
+      </div>
+    </div>
+
+    <div id="dashboard" class="card" style="display:none">
+      <h2>Dashboard</h2>
+      <div id="profileView" class="muted">Loading profile...</div>
+
+      <h3 style="margin-top:12px">Upcoming Counselling Deadlines</h3>
+      <ul id="deadlinesList"></ul>
+
+      <h3>Suggested Colleges (sample)</h3>
+      <ul id="collegesList"></ul>
+
+      <div style="margin-top:12px">
+        <button id="goToPredictorBtn">Go to Seat Predictor</button>
+      </div>
+    </div>
+
+    <div id="predictor" class="card" style="display:none">
+      <h2>Seat Predictor</h2>
+      <label>Enter Rank (numeric)</label>
+      <input id="predictRank" placeholder="e.g. 12000" />
+      <div style="margin-top:8px"><button id="predictBtn">Predict</button></div>
+      <h3 style="margin-top:12px">Predicted Colleges</h3>
+      <ul id="predictResults"></ul>
+    </div>
+
+    <div class="card">
+      <h3>Notes</h3>
+      <p class="muted">Replace the Firebase config below. Serve this file via a web server. This is a starter — add secure rules, storage upload, and AI assistant as next steps.</p>
+    </div>
+  </div>
+
+  <!-- Firebase SDKs (modular) -->
+  <script type="module">
+    // ----- REPLACE WITH YOUR FIREBASE CONFIG -----
+    const FIREBASE_CONFIG = {
+      apiKey: "REPLACE_API_KEY",
+      authDomain: "REPLACE_AUTH_DOMAIN",
+      projectId: "REPLACE_PROJECT_ID",
+      storageBucket: "REPLACE_STORAGE_BUCKET",
+      messagingSenderId: "REPLACE_MESSAGING_SENDER_ID",
+      appId: "REPLACE_APP_ID"
+    };
+    // --------------------------------------------
+
+    import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.4.0/firebase-app.js';
+    import { getAuth, signInAnonymously, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.4.0/firebase-auth.js';
+    import { getFirestore, doc, setDoc, getDoc } from 'https://www.gstatic.com/firebasejs/10.4.0/firebase-firestore.js';
+
+    const app = initializeApp(FIREBASE_CONFIG);
+    const auth = getAuth(app);
+    const db = getFirestore(app);
+
+    // UI references
+    const chips = document.querySelectorAll('#examChips .chip');
+    const rankInput = document.getElementById('rankInput');
+    const categorySelect = document.getElementById('categorySelect');
+    const saveBtn = document.getElementById('saveProfileBtn');
+    const saveStatus = document.getElementById('saveStatus');
+    const onboarding = document.getElementById('onboarding');
+    const dashboard = document.getElementById('dashboard');
+    const profileView = document.getElementById('profileView');
+    const deadlinesList = document.getElementById('deadlinesList');
+    const collegesList = document.getElementById('collegesList');
+    const goToPredictorBtn = document.getElementById('goToPredictorBtn');
+    const predictor = document.getElementById('predictor');
+    const predictRank = document.getElementById('predictRank');
+    const predictBtn = document.getElementById('predictBtn');
+    const predictResults = document.getElementById('predictResults');
+
+    let selectedExam = 'KCET';
+    chips.forEach(c => c.addEventListener('click', () => {
+      chips.forEach(x => x.classList.remove('active'));
+      c.classList.add('active');
+      selectedExam = c.dataset.exam;
+    }));
+
+    // Anonymous sign-in
+    async function ensureAuth() {
+      return new Promise((resolve, reject) => {
+        onAuthStateChanged(auth, (u) => {
+          if (u) return resolve(u);
+          signInAnonymously(auth).then(userCredential => resolve(userCredential.user)).catch(reject);
+        });
+      });
+    }
+
+    saveBtn.addEventListener('click', async () => {
+      try {
+        saveStatus.textContent = 'Saving...';
+        const user = await ensureAuth();
+        const profileRef = doc(db, 'users', user.uid);
+        await setDoc(profileRef, { exam: selectedExam, rank: rankInput.value.trim(), category: categorySelect.value }, { merge: true });
+        saveStatus.textContent = 'Saved ✓';
+        showDashboard();
+      } catch (err) {
+        console.error(err);
+        saveStatus.textContent = 'Error saving';
+      }
+    });
+
+    async function showDashboard() {
+      try {
+        const user = await ensureAuth();
+        const profileRef = doc(db, 'users', user.uid);
+        const snap = await getDoc(profileRef);
+        let data = null;
+        if (snap.exists()) data = snap.data();
+
+        onboarding.style.display = 'none';
+        predictor.style.display = 'none';
+        dashboard.style.display = 'block';
+
+        if (data) {
+          profileView.innerHTML = `<div>Exam: <strong>${data.exam}</strong></div><div>Rank/Score: <strong>${data.rank || 'Not set'}</strong></div><div>Category: <strong>${data.category || 'General'}</strong></div>`;
+        } else {
+          profileView.textContent = 'Profile not found.';
+        }
+
+        // Sample deadlines (replace with real data fetch later)
+        const deadlines = [
+          { id: 'd1', title: 'KCET Round 2 - Choice Filling', date: '2025-08-20' },
+          { id: 'd2', title: 'NEET State Counselling - Document Verification', date: '2025-08-25' }
+        ];
+        deadlinesList.innerHTML = '';
+        deadlines.forEach(d => { const li = document.createElement('li'); li.textContent = `${d.title} — ${d.date}`; deadlinesList.appendChild(li); });
+
+        const suggested = [
+          { id: 's1', name: 'Sample Engineering College - CSE', cutoff: 'Rank <= 15000' },
+          { id: 's2', name: 'Sample Medical College - MBBS', cutoff: 'NEET >= 500' }
+        ];
+        collegesList.innerHTML = '';
+        suggested.forEach(s => { const li = document.createElement('li'); li.textContent = `${s.name} (${s.cutoff})`; collegesList.appendChild(li); });
+      } catch (err) { console.error(err); }
+    }
+
+    goToPredictorBtn.addEventListener('click', () => {
+      dashboard.style.display = 'none';
+      predictor.style.display = 'block';
+    });
+
+    predictBtn.addEventListener('click', () => {
+      const r = parseInt(predictRank.value || '0', 10);
+      if (!r) { alert('Enter numeric rank'); return; }
+      predictResults.innerHTML = '';
+      if (r <= 5000) appendPredict('Top College - CSE');
+      if (r <= 15000) appendPredict('Good College - CSE');
+      if (r > 15000) appendPredict('State College - ECE');
+    });
+
+    function appendPredict(text) { const li = document.createElement('li'); li.textContent = text; predictResults.appendChild(li); }
+
+    // On load: if user has profile, show dashboard
+    (async () => {
+      try {
+        const user = await ensureAuth();
+        const profileRef = doc(db, 'users', user.uid);
+        const snap = await getDoc(profileRef);
+        if (snap.exists()) showDashboard();
+      } catch (err) { console.error(err); }
+    })();
+
+  </script>
+</body>
+</html>
